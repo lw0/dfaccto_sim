@@ -1,0 +1,40 @@
+#include <iostream>
+#include <sstream>
+
+#include "model/memory.hpp"
+
+int main(int argc, char ** argv)
+{
+  std::clog << "WRAP(len = 8, size = 8) @0x132 width=32" << std::endl;
+  for (sim::model::MemoryBurstIter iter({7, sim::model::Size8, sim::model::BurstWrap}, 0x132, 32); iter; ++iter) {
+    std::clog << "0x" << std::hex << iter.addr() << std::dec << " - " << iter.upper() << ":" << iter.lower() << std::endl;
+  }
+  std::clog << "INCR(len = 27, size = 4) @0x105 width=32" << std::endl;
+  for (sim::model::MemoryBurstIter iter({26, sim::model::Size4, sim::model::BurstIncr}, 0x105, 32); iter; ++iter) {
+    std::clog << "0x" << std::hex << iter.addr() << std::dec << " - " << iter.upper() << ":" << iter.lower() << std::endl;
+  }
+  std::clog << "FIXED(len = 16, size = 4) @0x126 width=32" << std::endl;
+  for (sim::model::MemoryBurstIter iter({15, sim::model::Size4, sim::model::BurstFixed}, 0x126, 32); iter; ++iter) {
+    std::clog << "0x" << std::hex << iter.addr() << std::dec << " - " << iter.upper() << ":" << iter.lower() << std::endl;
+  }
+  std::stringstream warnstream;
+  std::string warning;
+  if(!(warning = warnstream.str()).empty()) {
+    std::clog << "WARNING: " << warning;
+    warnstream.str(std::string());
+  }
+  warnstream << "This is a warning!" << std::endl;
+  if(!(warning = warnstream.str()).empty()) {
+    std::clog << "WARNING: " << warning;
+    warnstream.str(std::string());
+  }
+  if(!(warning = warnstream.str()).empty()) {
+    std::clog << "WARNING: " << warning;
+    warnstream.str(std::string());
+  }
+  warnstream << "This is another!" << std::endl;
+  if(!(warning = warnstream.str()).empty()) {
+    std::clog << "WARNING: " << warning;
+    warnstream.str(std::string());
+  }
+}

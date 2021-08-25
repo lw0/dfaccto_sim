@@ -1,0 +1,5 @@
+/build/
+/wave/
+/sw/stash/
+.ccls-cache/
+.clangd
