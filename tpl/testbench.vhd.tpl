@@ -1,6 +1,7 @@
 {{>lib:vhdl/dependencies.part.tpl}}
 use work.{{x_interfacepkg}}.all;
 
+
 entity {{identifier}} is
   generic (
     CFGSCRIPT : String := "");
@@ -29,7 +30,6 @@ begin
   {{>lib:vhdl/instance.part.tpl}}
 
   {{/instances}}
-
 
   -- Testbench Logic:
 

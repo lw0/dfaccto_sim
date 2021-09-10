@@ -22,8 +22,12 @@ ifndef DFSIM_MODEL_DIR
   $(warning `DFSIM_MODEL_DIR` set to $(DFSIM_MODEL_DIR) by default.)
 endif
 SW_BUILD_DIR   = $(DFSIM_MODEL_DIR)/sw
+SW_BUILD_LOG   = $(SW_BUILD_DIR)/build.log
+SW_BUILD_ERR   = $(SW_BUILD_DIR)/error.log
 SW_BUILD_LIB   = $(SW_BUILD_DIR)/aux.a
 HW_BUILD_DIR   = $(DFSIM_MODEL_DIR)/hw
+HW_BUILD_LOG   = $(HW_BUILD_DIR)/build.log
+HW_BUILD_ERR   = $(HW_BUILD_DIR)/error.log
 HW_BUILD_LIST  = $(HW_BUILD_DIR)/sources.lst
 HW_BUILD_MODEL = $(DFSIM_MODEL_DIR)/$(DFSIM_TOP)
 
@@ -35,6 +39,7 @@ endif
 WAVE_DIR  = $(DFSIM_WAVE_DIR)/$(shell date +%Y_%m_%d_%H%M%S)
 WAVE_LINK = $(DFSIM_WAVE_DIR)/latest
 WAVE_FILE = $(WAVE_DIR)/$(DFSIM_TOP).ghw
+WAVE_LOG = $(WAVE_DIR)/$(DFSIM_TOP).log
 
 
 #------------------------------------------------------------------------------
@@ -47,7 +52,7 @@ SW_OBJS = $(SW_SRCS:$(SW_DIR)/%.cpp=$(SW_BUILD_DIR)/%.o)
 SW_DEPS = $(SW_OBJS:.o=.d)
 
 CXXFLAGS  += -std=c++17 -g -O0
-GHDLFLAGS += -g
+GHDLFLAGS += -g --std=02
 
 
 #------------------------------------------------------------------------------
@@ -80,8 +85,12 @@ info:
 	@echo
 	@echo " DFSIM_MODEL_DIR    = $(DFSIM_MODEL_DIR)"
 	@echo " SW_BUILD_DIR       = $(SW_BUILD_DIR)"
+	@echo " SW_BUILD_LOG       = $(SW_BUILD_LOG)"
+	@echo " SW_BUILD_ERR       = $(SW_BUILD_ERR)"
 	@echo " SW_BUILD_LIB       = $(SW_BUILD_LIB)"
 	@echo " HW_BUILD_DIR       = $(HW_BUILD_DIR)"
+	@echo " HW_BUILD_LOG       = $(HW_BUILD_LOG)"
+	@echo " HW_BUILD_ERR       = $(HW_BUILD_ERR)"
 	@echo " HW_BUILD_LIST      = $(HW_BUILD_LIST)"
 	@echo " HW_BUILD_MODEL     = $(HW_BUILD_MODEL)"
 	@echo
@@ -97,20 +106,31 @@ info:
 	@echo " CXXFLAGS           = $(CXXFLAGS)"
 	@echo " GHDLFLAGS          = $(GHDLFLAGS)"
 
+
 #------------------------------------------------------------------------------
 # Software Testbench: Compile static library from C++ sources
 #------------------------------------------------------------------------------
 
 .PHONY: swlib
-swlib: $(SW_BUILD_LIB)
+swlib:
+	@mkdir -p $(SW_BUILD_DIR)
+	@rm -f $(SW_BUILD_ERR)
+	@echo | tee $(SW_BUILD_LOG)
+	@echo "--- Building Software Library" | tee -a $(SW_BUILD_LOG)
+	@$(MAKE) $(SW_BUILD_LIB) 2>&1 | tee -a $(SW_BUILD_LOG)
+
+CMD_COMPILE = $(CXX) $(CXXFLAGS) -c $< -MMD -o $@
+CMD_LIB = $(AR) rcs $@ $^
 
 $(SW_BUILD_DIR)/%.o: $(SW_DIR)/%.cpp
 	@mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) -c $< -MMD -o $@
+	@echo $(CMD_COMPILE)
+	@$(CMD_COMPILE) 2>$(SW_BUILD_ERR) || (echo "----- Errors, see $(SW_BUILD_ERR)"; exit 1)
 
 $(SW_BUILD_LIB): $(SW_OBJS)
 	@mkdir -p $(@D)
-	$(AR) rcs $@ $^
+	@echo $(CMD_LIB)
+	@$(CMD_LIB) 2> $(SW_BUILD_ERR) || (echo "----- Errors, see $(SW_BUILD_ERR)"; exit 1)
 
 -include $(SW_DEPS)
 
@@ -118,31 +138,43 @@ $(SW_BUILD_LIB): $(SW_OBJS)
 # Hardware Model: Build and link with ghdl
 #------------------------------------------------------------------------------
 
-.PHONY: model
-model: $(HW_BUILD_MODEL)
 
-$(HW_BUILD_MODEL): $(DFSIM_LIST) $(SW_BUILD_LIB)
+.PHONY: model
+model: swlib
+	@mkdir -p $(HW_BUILD_DIR)
+	@rm -f $(HW_BUILD_ERR)
+	@echo | tee $(HW_BUILD_LOG)
+	@echo "--- Building Hardware Model" | tee -a $(HW_BUILD_LOG)
+	@$(MAKE) $(HW_BUILD_MODEL) 2>&1 | tee -a $(HW_BUILD_LOG)
+
+CMD_REMOVE = ghdl remove --workdir=$(HW_BUILD_DIR)
+CMD_IMPORT = ghdl import --workdir=$(HW_BUILD_DIR) $$HW_SRC
+CMD_MAKE = ghdl make -Mu -b --workdir=$(HW_BUILD_DIR) $(GHDLFLAGS) -o $(HW_BUILD_MODEL) $(DFSIM_TOP)
+CMD_LINK = ghdl link --LINK=$(CXX) --workdir=$(HW_BUILD_DIR) -Wl,$(SW_BUILD_LIB) -Wl,-llua $(GHDLFLAGS) -o $(HW_BUILD_MODEL) $(DFSIM_TOP)
+
+$(HW_BUILD_MODEL): $(DFSIM_LIST)
 	@mkdir -p $(HW_BUILD_DIR)
 	@if [ "$(shell cat $(HW_BUILD_LIST) | sort | md5sum)" != \
 	      "$(shell cat $(DFSIM_LIST) | sort | md5sum)" ]; then \
-	  cat $(DFSIM_LIST) > $(HW_BUILD_LIST); \
 	  echo; \
 	  echo "--- Updating hardware source library"; \
-	  cat $(HW_BUILD_LIST) | while read HW_SRC; do \
-	    echo "----- Import file: $$HW_SRC"; \
-	    ghdl import --workdir=$(HW_BUILD_DIR) $$HW_SRC; \
-	  done; \
+	  echo $(CMD_REMOVE); $(CMD_REMOVE); \
+	  cat $(DFSIM_LIST) | while read HW_SRC; do \
+	    echo $(CMD_IMPORT); \
+	    $(CMD_IMPORT) 2>$(HW_BUILD_ERR) || (echo "----- Errors, see $(HW_BUILD_ERR)"; exit 1); \
+	  done && cat $(DFSIM_LIST) > $(HW_BUILD_LIST) || exit 1; \
 	else \
 	  echo; \
 	  echo "--- Keeping hardware source library"; \
 	fi
 	@echo
 	@echo "--- Building hardware model for: $(DFSIM_TOP)"
-	@ghdl make -Mu -b --workdir=$(HW_BUILD_DIR) $(GHDLFLAGS) -o $(HW_BUILD_MODEL) $(DFSIM_TOP)
+	@echo $(CMD_MAKE)
+	@$(CMD_MAKE) 2>$(HW_BUILD_ERR) || (echo "----- Errors, see $(HW_BUILD_ERR)"; exit 1)
 	@echo
 	@echo "--- Linking model for: $(DFSIM_TOP)"
-	@ghdl link --LINK=$(CXX) --workdir=$(HW_BUILD_DIR) -Wl,$(SW_BUILD_LIB) -Wl,-llua $(GHDLFLAGS) -o $(HW_BUILD_MODEL) $(DFSIM_TOP)
-
+	@echo $(CMD_LINK)
+	@$(CMD_LINK) 2>$(HW_BUILD_ERR) || (echo "----- Errors, see $(HW_BUILD_ERR)"; exit 1)
 
 #------------------------------------------------------------------------------
 # Simulation: Execute model and store waveforms
@@ -154,8 +186,8 @@ sim: $(HW_BUILD_MODEL)
 	@echo "--- Simulating hardware model for: $(DFSIM_TOP)"
 	@echo "----- Waveform at: $(WAVE_FILE)"
 	@mkdir -p $(WAVE_DIR)
-	@ln -sfr $(WAVE_DIR) $(WAVE_LINK)
-	@$(HW_BUILD_MODEL) --wave=$(WAVE_FILE) -gCFGSCRIPT=$(DFSIM_SCRIPT) || true
+	@ln -sfrn $(WAVE_DIR) $(WAVE_LINK)
+	@script -c "$(HW_BUILD_MODEL) --wave=$(WAVE_FILE) -gCFGSCRIPT=$(DFSIM_SCRIPT)" $(WAVE_LOG)
 
 #TODO-lw add support for -gg_CfgDir=$(parent $(DFSIM_SCRIPT)) -gg_RunDir=$(WAVE_DIR)
 
